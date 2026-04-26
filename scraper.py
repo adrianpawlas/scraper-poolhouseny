@@ -29,10 +29,10 @@ class PoolHouseScraper:
     async def scroll_and_load_products(self, page: Page, max_products: int = 200) -> List[str]:
         urls = []
         seen = set()
-        scroll_pause = 2.5
+        scroll_pause = 1.0
 
         while len(urls) < max_products:
-            await page.evaluate("window.scrollBy(0, 300)")
+            await page.evaluate("window.scrollBy(0, 600)")
             await asyncio.sleep(scroll_pause)
 
             product_links = await page.query_selector_all("a[href*='/products/']")
@@ -48,7 +48,7 @@ class PoolHouseScraper:
                         new_found = True
 
             if not new_found and len(urls) > 0:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
                 product_links = await page.query_selector_all("a[href*='/products/']")
                 for link in product_links:
                     href = await link.get_attribute("href")
@@ -61,14 +61,14 @@ class PoolHouseScraper:
             if len(urls) >= max_products:
                 break
 
-            scroll_pause = min(scroll_pause + 0.5, 4)
+            scroll_pause = min(scroll_pause + 0.2, 2)
 
         return list(set(urls))[:max_products]
 
     async def scrape_collection(self, page: Page, url: str) -> List[str]:
         print(f"Scraping collection: {url}")
         await page.goto(url, wait_until="domcontentloaded", timeout=90000)
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
         product_links = await page.query_selector_all("a[href*='/products/']")
         urls = []
@@ -112,7 +112,7 @@ class PoolHouseScraper:
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
             title = await self._get_title(page)
             price = await self._get_price(page)
