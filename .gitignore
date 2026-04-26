@@ -5,3 +5,5 @@ products_output.json
 products_with_embeddings.json
 error_log.txt
 *.json
+test_*.py
+simple_test.py
