@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+products_output.json
+products_with_embeddings.json
+error_log.txt
+*.json

@@ -1,0 +1,7 @@
+playwright
+supabase
+torch
+transformers
+pillow
+httpx
+python-dotenv
