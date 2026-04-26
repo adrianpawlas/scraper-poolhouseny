@@ -18,7 +18,7 @@ class PoolHouseScraper:
     async def init_browser(self):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=False,
+            headless=True,
             args=['--disable-blink-features=AutomationControlled']
         )
         self.context = await self.browser.new_context(
