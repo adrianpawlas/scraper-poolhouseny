@@ -53,12 +53,13 @@ class EmbeddingGenerator:
             print(f"Error generating image embedding for {image_url}: {e}")
             return np.zeros(768)
 
-    def get_text_embedding(self, text: str) -> np.ndarray:
+    def get_text_embedding(self, text: str, max_length: int = 64) -> np.ndarray:
         if not self.model:
             self.load_model()
 
         try:
-            inputs = self.processor(text=text, return_tensors="pt")
+            text = text[:500]
+            inputs = self.processor(text=text, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
             with torch.no_grad():
