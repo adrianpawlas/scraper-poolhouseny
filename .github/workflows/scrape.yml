@@ -1,12 +1,7 @@
-name: Pool House NY Scraper
+name: Pool House Scraper
 
 on:
   workflow_dispatch:
-    inputs:
-      limit:
-        description: 'Limit number of products (optional)'
-        required: false
-        default: ''
   schedule:
     - cron: '0 13 * * 0'  # Sunday at 1 PM
     - cron: '0 13 * * 4'  # Thursday at 1 PM
@@ -26,26 +21,20 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-
-      - name: Install Playwright browsers
-        run: |
-          python -m playwright install chromium
-          python -m playwright install-deps
+          playwright install chromium
 
       - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          if [ -n "${{ github.event.inputs.limit }}" ]; then
-            python main.py --limit ${{ github.event.inputs.limit }}
-          else
-            python main.py
+        run: python main.py
 
-      - name: Upload output
+      - name: Upload scraper logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: products-output
-          path: products_output.json
-          products_with_embeddings.json
+          name: scraper-logs
+          path: |
+            products_output.json
+            products_with_embeddings.json
+          retention-days: 7
