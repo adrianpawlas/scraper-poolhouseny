@@ -234,6 +234,7 @@ class PoolHouseScraper:
                         src = f"{self.base_url}{src}"
 
                     src = re.sub(r'\?.*$', '', src)
+                    src = re.sub(r'_\d+x_', '_960x_', src)
 
                     if src not in images and 'placeholder' not in src.lower():
                         images.append(src)
@@ -248,6 +249,7 @@ class PoolHouseScraper:
                     if src:
                         if src.startswith("//"):
                             src = "https:" + src
+                        src = re.sub(r'_\d+x_', '_960x_', src)
                         images.append(src)
             except:
                 pass
