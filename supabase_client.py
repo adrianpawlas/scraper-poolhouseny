@@ -34,7 +34,7 @@ class SupabaseClient:
             "created_at": "now()",
             "image_embedding": image_embedding.tolist() if image_embedding is not None else None,
             "info_embedding": info_embedding.tolist() if info_embedding is not None else None,
-            "country": "US",
+            "country": None,
             "tags": []
         }
 

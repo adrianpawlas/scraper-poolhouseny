@@ -126,11 +126,6 @@ class PoolHouseScraper:
             images = await self._get_images(page)
             category = await self._get_category(page)
             metadata = await self._get_metadata(page)
-            sizes = await self._get_sizes(page)
-
-            full_metadata = metadata
-            if sizes:
-                full_metadata = f"{metadata}\nSizes: {sizes}" if metadata else f"Sizes: {sizes}"
 
             product_data = {
                 "source": "scraper-poolhouseny",
@@ -145,7 +140,7 @@ class PoolHouseScraper:
                 "second_hand": False,
                 "image_url": images[0] if images else None,
                 "additional_images": ", ".join(images[1:]) if len(images) > 1 else None,
-                "metadata": full_metadata,
+                "metadata": metadata,
                 "created_at": "NOW()"
             }
 
@@ -172,7 +167,7 @@ class PoolHouseScraper:
             if price_container:
                 price_text = await price_container.inner_text()
                 price_text = price_text.replace("SOLD OUT", "").strip()
-                return self._extract_prices(price_text)
+                return self._extract_price_only(price_text)
         except:
             pass
         return None
@@ -182,19 +177,19 @@ class PoolHouseScraper:
             sale_el = await page.query_selector(".price-item--sale")
             if sale_el:
                 sale_text = await sale_el.inner_text()
-                return self._extract_prices(sale_text)
+                return self._extract_price_only(sale_text)
 
             price_container = await page.query_selector(".price")
             if price_container:
                 items = await price_container.query_selector_all(".price-item")
                 if len(items) > 1:
                     sale_text = await items[-1].inner_text()
-                    return self._extract_prices(sale_text)
+                    return self._extract_price_only(sale_text)
         except:
             pass
         return None
 
-    def _extract_prices(self, text: str) -> str:
+    def _extract_price_only(self, text: str) -> str:
         text = text.strip()
         numbers = re.findall(r'[\d\s.,]+', text)
         currencies = re.findall(r'(USD|EUR|GBP|CZK|PLN|SEK|NOK|DKK|CAD|AUD|JPY|CNY|KRW|kr|€|£|¥)', text, re.IGNORECASE)
@@ -207,6 +202,9 @@ class PoolHouseScraper:
             return f"{number}{currency}"
 
         return text
+
+    def _extract_prices(self, text: str) -> str:
+        return self._extract_price_only(text)
 
     async def _get_description(self, page: Page) -> Optional[str]:
         try:
@@ -277,7 +275,41 @@ class PoolHouseScraper:
         try:
             details = []
 
-            detail_elements = await page.query_selector_all(".product-details-content .text-body, .product-info .text-body")
+            title = await self._get_title(page)
+            if title:
+                details.append(f"Title: {title}")
+
+            price = await self._get_price(page)
+            if price:
+                details.append(f"Price: {price}")
+
+            sale = await self._get_sale_price(page)
+            if sale:
+                details.append(f"Sale: {sale}")
+
+            size_buttons = await page.query_selector_all(".variant-option-label, .option-selection, [class*='size'] button, .swatch-input")
+            if size_buttons:
+                sizes = []
+                for btn in size_buttons:
+                    text = await btn.inner_text()
+                    text = text.strip()
+                    if text and text not in sizes:
+                        sizes.append(text)
+                if sizes:
+                    details.append(f"Sizes: {', '.join(sizes)}")
+
+            color_options = await page.query_selector_all("[class*='color'] .swatch-input, [class*='color'] label")
+            if color_options:
+                colors = []
+                for btn in color_options:
+                    text = await btn.inner_text()
+                    text = text.strip()
+                    if text and text not in colors:
+                        colors.append(text)
+                if colors:
+                    details.append(f"Colors: {', '.join(colors)}")
+
+            detail_elements = await page.query_selector_all(".product-details-content .text-body, .product-info .text-body, .product-description")
             for el in detail_elements:
                 text = await el.inner_text()
                 if text and text.strip():
@@ -291,7 +323,7 @@ class PoolHouseScraper:
                     title = await title_el.inner_text()
                     content = await content_el.inner_text()
                     if title and content:
-                        details.append(f"{title}: {content.strip()}")
+                        details.append(f"{title.strip()}: {content.strip()}")
 
             return " | ".join(details) if details else None
         except:
