@@ -4,6 +4,8 @@ import json
 import argparse
 import traceback
 import sys
+import time
+from datetime import datetime, timedelta
 
 from scraper import PoolHouseScraper
 from embeddings import EmbeddingGenerator
@@ -22,6 +24,7 @@ class PoolHouseOrchestrator:
         self.products_data = []
         self.output_file = "products_output.json"
         self.limit = limit
+        self.stats = {"new": 0, "updated": 0, "unchanged": 0, "deleted": 0}
 
     async def run(self):
         print("=" * 60, flush=True)
@@ -67,48 +70,82 @@ class PoolHouseOrchestrator:
             self.embedding_generator = EmbeddingGenerator()
             self.embedding_generator.load_model()
 
-            print("\n[4/5] Generating embeddings and preparing records...", flush=True)
+            print("\n[4/5] Processing products with smart upsert...", flush=True)
             sys.stdout.flush()
-            records = []
+
+            existing_products = self.supabase_client.get_all_products()
+            print(f"Found {len(existing_products)} existing products in DB", flush=True)
+
+            processed_urls = set()
+            batch_records = []
+            batch_size = 50
+            retry_count = {}
+            max_retries = 3
+
             for i, product in enumerate(self.products_data):
                 print(f"  Processing {i+1}/{len(self.products_data)}: {product.get('title', 'Unknown')[:40]}...", flush=True)
                 sys.stdout.flush()
 
-                try:
-                    image_url = product.get("image_url")
-                    image_embedding = None
-                    if image_url:
-                        image_embedding = self.embedding_generator.get_image_embedding(image_url)
+                product_url = product.get("product_url")
+                processed_urls.add(product_url)
 
-                    info_embedding = self.embedding_generator.get_info_embedding(product)
+                existing = existing_products.get(product_url)
+                needs_embedding = True
+                should_insert = True
 
-                    record = self.supabase_client.prepare_product_record(
-                        product, image_embedding, info_embedding
-                    )
-                    records.append(record)
-                except Exception as e:
-                    print(f"    -> Embedding error: {str(e)[:50]}", flush=True)
-
-            print(f"Prepared {len(records)} records", flush=True)
-
-            print("\n[5/5] Importing to Supabase...", flush=True)
-            sys.stdout.flush()
-            batch_size = 10
-            total_imported = 0
-            for i in range(0, len(records), batch_size):
-                batch = records[i:i+batch_size]
-                result = self.supabase_client.insert_batch(batch)
-                if result.get("success"):
-                    total_imported += len(batch)
-                    print(f"  Imported batch {i//batch_size + 1}: {len(batch)} products", flush=True)
+                if existing:
+                    if self._has_changed(existing, product):
+                        self.stats["updated"] += 1
+                        print(f"    -> Updated", flush=True)
+                    else:
+                        self.stats["unchanged"] += 1
+                        should_insert = False
+                        needs_embedding = False
+                        print(f"    -> Unchanged (skipped)", flush=True)
                 else:
-                    print(f"  Failed batch {i//batch_size + 1}: {result.get('error')}", flush=True)
+                    self.stats["new"] += 1
+                    print(f"    -> New", flush=True)
 
-            print(f"\nTotal imported: {total_imported} products", flush=True)
+                if should_insert:
+                    try:
+                        image_embedding = None
+                        if needs_embedding and product.get("image_url"):
+                            image_embedding = self.embedding_generator.get_image_embedding(product["image_url"])
+                            await asyncio.sleep(0.5)
+
+                        info_embedding = self.embedding_generator.get_info_embedding(product)
+                        if needs_embedding:
+                            await asyncio.sleep(0.5)
+
+                        record = self.supabase_client.prepare_product_record(
+                            product, image_embedding, info_embedding
+                        )
+
+                        batch_records.append(record)
+
+                        if len(batch_records) >= batch_size:
+                            success = self._insert_batch(batch_records, retry_count, max_retries)
+                            if success:
+                                print(f"    -> Inserted batch of {len(batch_records)}", flush=True)
+                            batch_records = []
+
+                    except Exception as e:
+                        print(f"    -> Error: {str(e)[:50]}", flush=True)
+
+            if batch_records:
+                success = self._insert_batch(batch_records, retry_count, max_retries)
+                if success:
+                    print(f"    -> Inserted final batch of {len(batch_records)}", flush=True)
+
+            print("\n[5/5] Cleaning stale products...", flush=True)
+            sys.stdout.flush()
+            stale_count = self.supabase_client.cleanup_stale_products(processed_urls, self.stats["deleted"])
+            self.stats["deleted"] = stale_count
+            print(f"Deleted {stale_count} stale products", flush=True)
 
             final_output = "products_with_embeddings.json"
             with open(final_output, "w") as f:
-                json.dump(records, f, indent=2, default=str)
+                json.dump([r for r in batch_records if r.get("image_embedding")], f, indent=2, default=str)
             print(f"Data saved to {final_output}", flush=True)
 
         except Exception as e:
@@ -124,8 +161,55 @@ class PoolHouseOrchestrator:
         print("\n" + "=" * 60, flush=True)
         print("Scraping Complete!", flush=True)
         print("=" * 60, flush=True)
+        print(f"\n--- SUMMARY ---", flush=True)
+        print(f"New products: {self.stats['new']}", flush=True)
+        print(f"Updated: {self.stats['updated']}", flush=True)
+        print(f"Unchanged (skipped): {self.stats['unchanged']}", flush=True)
+        print(f"Deleted stale: {self.stats['deleted']}", flush=True)
+        print("=" * 60, flush=True)
 
         return self.products_data
+
+    def _has_changed(self, existing: dict, new_product: dict) -> bool:
+        if existing.get("title") != new_product.get("title"):
+            return True
+        if existing.get("price") != new_product.get("price"):
+            return True
+        if existing.get("sale") != new_product.get("sale"):
+            return True
+        if existing.get("image_url") != new_product.get("image_url"):
+            return True
+        if existing.get("additional_images") != new_product.get("additional_images"):
+            return True
+        if existing.get("description") != new_product.get("description"):
+            return True
+        if existing.get("metadata") != new_product.get("metadata"):
+            return True
+        return False
+
+    def _insert_batch(self, batch, retry_count, max_retries):
+        batch_key = ",".join([r.get("product_url", "") for r in batch[:3]])
+        if batch_key not in retry_count:
+            retry_count[batch_key] = 0
+
+        result = self.supabase_client.insert_batch(batch)
+
+        if result.get("success"):
+            return True
+
+        retry_count[batch_key] += 1
+        if retry_count[batch_key] < max_retries:
+            print(f"    -> Batch retry {retry_count[batch_key]}/{max_retries}", flush=True)
+            time.sleep(2)
+            result = self.supabase_client.insert_batch(batch)
+            if result.get("success"):
+                return True
+
+        failed_urls = [r.get("product_url") for r in batch]
+        with open("failed_products.log", "a") as f:
+            f.write(f"Failed batch: {failed_urls}\n")
+        print(f"    -> Batch failed after {max_retries} retries", flush=True)
+        return False
 
 
 async def main():

@@ -2,8 +2,9 @@ import supabase
 from supabase import create_client
 import json
 import hashlib
-from typing import Optional
+from typing import Optional, Dict, Set
 import numpy as np
+from datetime import datetime, timedelta
 
 
 class SupabaseClient:
@@ -37,19 +38,23 @@ class SupabaseClient:
             "country": None,
             "tags": []
         }
-
         return record
 
-    def insert_product(self, record: dict) -> bool:
+    def get_all_products(self) -> Dict[str, dict]:
         try:
-            data, count = self.client.table("products").upsert(
-                record,
-                on_conflict="source,product_url"
-            ).execute()
-            return True
+            response = self.client.table("products").select("*").eq("source", "scraper-poolhouseny").execute()
+            return {item["product_url"]: item for item in response.data}
         except Exception as e:
-            print(f"Error inserting product: {e}")
-            return False
+            print(f"Error fetching products: {e}")
+            return {}
+
+    def get_product_urls(self) -> Set[str]:
+        try:
+            response = self.client.table("products").select("product_url").eq("source", "scraper-poolhouseny").execute()
+            return set(item["product_url"] for item in response.data)
+        except Exception as e:
+            print(f"Error fetching URLs: {e}")
+            return set()
 
     def insert_batch(self, records: list) -> dict:
         try:
@@ -62,13 +67,16 @@ class SupabaseClient:
             print(f"Error inserting batch: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_existing_products(self) -> set:
+    def insert_product(self, record: dict) -> bool:
         try:
-            response = self.client.table("products").select("product_url").execute()
-            return set(item["product_url"] for item in response.data)
+            data, count = self.client.table("products").upsert(
+                record,
+                on_conflict="source,product_url"
+            ).execute()
+            return True
         except Exception as e:
-            print(f"Error fetching existing products: {e}")
-            return set()
+            print(f"Error inserting product: {e}")
+            return False
 
     def delete_product(self, product_url: str) -> bool:
         try:
@@ -77,3 +85,17 @@ class SupabaseClient:
         except Exception as e:
             print(f"Error deleting product: {e}")
             return False
+
+    def cleanup_stale_products(self, seen_urls: Set[str], deleted_count: int = 0) -> int:
+        all_urls = self.get_product_urls()
+        stale_count = 0
+
+        for url in all_urls:
+            if url not in seen_urls:
+                try:
+                    self.client.table("products").delete().eq("product_url", url).execute()
+                    stale_count += 1
+                except Exception as e:
+                    print(f"Error deleting stale product {url}: {e}")
+
+        return stale_count
