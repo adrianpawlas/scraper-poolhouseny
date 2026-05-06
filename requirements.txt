@@ -5,3 +5,4 @@ transformers
 pillow
 httpx
 python-dotenv
+sentencepiece
